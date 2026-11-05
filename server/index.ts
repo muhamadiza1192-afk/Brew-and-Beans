@@ -69,6 +69,40 @@ app.post('/api/auth/login', async (req, res) => {
     }
 })
 
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+    try {
+        const userId = res.locals.user.userId
+
+        const user = await prisma.user.findUnique({
+            where: {
+                id: userId,
+            },
+            select: {
+                id: true,
+                username: true,
+                role: true,
+            },
+        })
+
+        if (!user) {
+            return res.status(401).json({
+                message: 'Pengguna tidak ditemukan',
+            })
+        }
+
+        res.json({
+            message: 'Sesi masih valid',
+            user,
+        })
+    } catch (error) {
+        console.error(error)
+
+        res.status(500).json({
+            message: 'Gagal memvalidasi sesi pengguna'
+        })
+    }
+})
+
 app.get('/api/products', authenticateToken,async (req, res) => {
     try {
         
@@ -145,7 +179,7 @@ app.post('/api/products', authenticateToken, authorizeRole('ADMIN'),async (req, 
     }
 })
 
-app.patch('/api/products/:id', authenticateToken,async (req, res) => {
+app.patch('/api/products/:id', authenticateToken, authorizeRole('ADMIN'), async (req, res) => {
     try {
 
         const validation = updateProductSchema.safeParse(req.body)
@@ -211,7 +245,7 @@ app.patch('/api/products/:id', authenticateToken,async (req, res) => {
     }
 })
 
-app.get('/api/db-test', async (req, res) => {
+app.get('/api/db-test', authenticateToken, authorizeRole('ADMIN'), async (req, res) => {
     try {
         const totalProducts = await prisma.product.count()
         res.json({
@@ -228,7 +262,7 @@ app.get('/api/db-test', async (req, res) => {
 
 
 
-app.delete('/api/products/:id', authenticateToken,async (req,res) => {
+app.delete('/api/products/:id', authenticateToken, authorizeRole('ADMIN'), async (req, res) => {
     try {
 
         const idValidation = productIdSchema.safeParse(req.params.id)

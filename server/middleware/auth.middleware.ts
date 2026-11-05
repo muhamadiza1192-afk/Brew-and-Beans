@@ -8,7 +8,7 @@ export function authenticateToken(
 ) {
     try {
         const authHeader = req.headers.authorization
-        if(!authHeader || !authHeader?.startsWith('Bearer ')) {
+        if(!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({
                 message: 'Token autentikasi tidak ditemukan',
             })
@@ -46,7 +46,7 @@ export function authorizeRole(...allowedRoles: string[]) {
 
         if (!user || !allowedRoles.includes(user.role ?? '')) {
             return res.status(403).json({
-                message: ' Kamu tidak memiliki izin untuk mengakses fitur ini',
+                message: 'Kamu tidak memiliki izin untuk mengakses fitur ini',
             })
         }
         next()

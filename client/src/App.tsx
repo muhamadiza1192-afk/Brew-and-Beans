@@ -1,10 +1,16 @@
 import { useState, useEffect } from 'react'
 import { api } from './api'
+import { useAuth } from './context/AuthContext'
+import { Login } from './login'
 
 
 
 
 function App() {
+
+  const { user, logout, isAuthReady } = useAuth()
+  const isAdmin = user?.role === 'ADMIN'
+  const isFloor = user?.role === 'FLOOR'
   const [apiProducts, setApiProducts] = useState<
   {
     id: number
@@ -13,7 +19,7 @@ function App() {
     price: number
   }[]
   >([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
   async function fetchProducts() {
@@ -29,8 +35,13 @@ function App() {
   }
 
   useEffect(() => {
-  fetchProducts()
-  }, [])
+    if (user) {
+      fetchProducts()
+    } else {
+      setApiProducts([])
+      setIsLoading(false)
+    }
+  }, [user])
 
 
   const products = apiProducts
@@ -110,13 +121,43 @@ function App() {
     (total, transaction) => total + transaction.total, 0
   )
 
-  
+  if (!isAuthReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-amber-950 text-white">
+        Memeriksa sesi login...
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <Login/>
+  }
   
 
 
   return (
     <main className="min-h-screen bg-amber-950 p-8 text-white">
-      <h1 className="text-4xl font-bold">Brew & Beans</h1>
+      <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-4xl font-bold">Brew & Beans</h1>
+          <p className="mt-2 text-amber-200">
+            Selamat datang, {user?.username}
+          </p>
+
+          <p className="mt-1 text-sm text-amber-300">
+            Role: {user?.role}
+          </p>
+
+        </div>
+
+        <button
+        type="button"
+        onClick={logout}
+        className="rounded -lg bg-red-600 px-5 py-3 font-semibold text-white transition hover:bg-red-700"
+        >
+        Logout
+        </button>
+      </header>
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <section className="lg:col-span-2">
 
