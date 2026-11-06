@@ -11,6 +11,13 @@ function App() {
   const { user, logout, isAuthReady } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
   const isFloor = user?.role === 'FLOOR'
+
+  type Page = 'DASHBOARD' | 'KASIR' | 'TRANSAKSI' | 'PRODUK'
+
+  const [activePage, setActivePage] = useState<Page>(
+    user?.role === 'ADMIN' ? 'DASHBOARD' : 'KASIR'
+  )
+
   const [apiProducts, setApiProducts] = useState<
   {
     id: number
@@ -19,10 +26,22 @@ function App() {
     price: number
   }[]
   >([])
+
+  const products = apiProducts
+
+  const [newProductName, setNewProductName] = useState('')
+  const [newProductDescription, setNewProductDescription] = useState('')
+  const [newProductPrice, setNewProductPrice] = useState('')
+  const [editingProductId, setEditingProductId] = useState<number | null>(null)
+
+  const [isSavingProduct, setIsSavingProduct] = useState(false)
+  const [productMessage, setProductMessage] = useState('')
+
+
   const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
-  async function fetchProducts() {
+   async function fetchProducts() {
     try {
       const response = await api.get('/api/products')
       setApiProducts(response.data)
@@ -34,8 +53,97 @@ function App() {
     }
   }
 
+  async function handleSaveProduct(e: React.SubmitEvent<HTMLElement>) {
+    e.preventDefault()
+
+    setProductMessage('')
+
+    const price = Number(newProductPrice)
+
+    if (
+      !newProductName.trim() ||
+      !newProductDescription.trim() ||
+      !Number.isFinite(price) ||
+      price <= 0
+    ) {
+      setProductMessage('Lengkapi semua data dan masukkan harga yang valid.')
+      return
+    }
+
+    try {
+      setIsSavingProduct(true)
+
+      const productData = {
+        name: newProductName.trim(),
+        description: newProductDescription.trim(),
+        price: price,
+      }
+
+      if (editingProductId !== null) {
+        await api.patch(
+          `/api/products/${editingProductId}`,
+          productData
+        )
+
+        setProductMessage ('Produk berhasil diperbaharui!')
+      } else {
+        await api.post('/api/products', productData)
+
+        setProductMessage('Produk berhasil ditambahkan')
+      }
+
+      setNewProductName('')
+      setNewProductDescription('')
+      setNewProductPrice('')
+      setEditingProductId(null)
+
+      await fetchProducts()
+
+    } catch (error: any) {
+      console.error('Gagal menyimpan produk:', error)
+      setProductMessage(error.response?.data?.message || 'Gagal menambahkan produk.')
+    } finally {
+      setIsSavingProduct(false)
+    }
+  }
+
+  function handleEditProduct(product: {
+    id: number
+    name: string
+    description: string
+    price: number
+  }) {
+    setEditingProductId(product.id)
+    setNewProductName(product.name)
+    setNewProductDescription(product.description)
+    setNewProductPrice(String(product.price))
+    setProductMessage
+  }
+
+  async function handleDeleteProduct(productId: number) {
+    const confirmation = window.confirm(
+      'Apakah kamu yakin ingin menghapus produk ini?'
+    )
+
+    if (!confirmation) return
+    try {
+      await api.delete(`/api/products/${productId}`)
+
+      setProductMessage('Produk berhasil dihapus!')
+
+      await fetchProducts()
+    } catch (error: any) {
+      console.error('Gagal menghapus produk:', error)
+      setProductMessage(error.response?.data?.message || 'Gagal menghaoppus produk.')
+    }
+  }
+
   useEffect(() => {
     if (user) {
+      setActivePage(
+        user.role === 'ADMIN' ? 'DASHBOARD' : 'KASIR'
+      )
+
       fetchProducts()
     } else {
       setApiProducts([])
@@ -44,8 +152,7 @@ function App() {
   }, [user])
 
 
-  const products = apiProducts
-
+  
   const [showCheckout, setShowCheckout] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState('Tunai')
   const [paymentSuccess, setPaymentSuccess] = useState(false)
@@ -158,6 +265,233 @@ function App() {
         Logout
         </button>
       </header>
+
+      <nav className="mb-6 flex flex-wrap gap-3">
+        {isAdmin && (
+          <button
+          type="button"
+          onClick={() => setActivePage('DASHBOARD')}
+          className={`rounded-lg px-5 py-3 font-semibold transition ${
+            activePage === 'DASHBOARD'
+            ? 'bg-amber-500 text-amber-950'
+            : 'bg-amber-900 text-white hover:bg-amber-800'
+          }`}
+          >
+            Dashboard
+          </button>
+        )}
+
+        {isAdmin && (
+          <button
+          type="button"
+          onClick={() => setActivePage('PRODUK')}
+          className={`rounded-lg px-5 py-3 font-semibold transition ${
+            activePage === 'PRODUK'
+            ? 'bg-amber-500 text-amber-950'
+            : 'bg-amber-900 text-white hover:bg-amber-800'
+          }`}
+          >
+            Poduct
+          </button>
+        )}
+
+        <button
+        type="button"
+          onClick={() => setActivePage('KASIR')}
+          className={`rounded-lg px-5 py-3 font-semibold transition ${
+            activePage === 'KASIR'
+            ? 'bg-amber-500 text-amber-950'
+            : 'bg-amber-900 text-white hover:bg-amber-800'
+          }`}
+          >
+            Kasir
+        </button>
+
+        <button
+        type="button"
+          onClick={() => setActivePage('TRANSAKSI')}
+          className={`rounded-lg px-5 py-3 font-semibold transition ${
+            activePage === 'TRANSAKSI'
+            ? 'bg-amber-500 text-amber-950'
+            : 'bg-amber-900 text-white hover:bg-amber-800'
+          }`}
+          >
+            Transaksi
+        </button>
+      </nav>
+
+      {activePage === 'DASHBOARD' && isAdmin && (
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="rounded-xl bg-white p-5 shadow">
+            <p className="text-sm text-stone-500">
+              Total Produk
+            </p>
+            <p className="mt-2 text-2xl font-bold text-amber-900">
+              {products.length}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-white p-5 shadow">
+            <p className="text-sm text-stone-500">
+              Jumlah Transaksi
+            </p>
+            <p className="mt-2 text-2xl font-bold text-amber-900">
+              {transactionCount}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-white p-5 shadow">
+            <p className="text-sm text-stone-500">
+              Total Penjualan
+            </p>
+            <p className="mt-2 text-2xl font-bold text-amber-900">
+              Rp {totalSales.toLocaleString('id-ID')}
+            </p>
+          </div>
+        </section>
+      )}
+
+      {activePage === 'PRODUK' && isAdmin && (
+        <section className="space-y-6">
+          <div className="rounded-xl bg-white p-6 text-stone-800 shadow">
+          <h2 className="text-2xl font-bold text-amber-900">
+            Manajemen Produk
+          </h2>
+
+          <p className="mt-2 text-stone-600">
+            Halaman untuk mengelola produk Brew & Beans.
+          </p>
+
+          <form onSubmit={handleSaveProduct} className="mt-6 space-y-4">
+
+          <div>
+            <label className="mb-2 block font-medium">
+              Nama Produk
+            </label>
+            
+            <input
+            type="text"
+            value={newProductName}
+            onChange={(e) => setNewProductName(e.target.value)}
+            placeholder="Contoh: Caramel Latte"
+            className="w-full rounded-lg border border-stone-300 px-4 py-3"
+            required
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block font-medium">
+              Deskripsi Produk
+            </label>
+            
+            <textarea
+            value={newProductDescription}
+            onChange={(e) => setNewProductDescription(e.target.value)}
+            placeholder="Masukkan deskripsi produk"
+            className="w-full rounded-lg border border-stone-300 px-4 py-3"
+            rows={3}
+            required
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block font-medium">
+              Harga Produk
+            </label>
+            
+            <input
+            type="number"
+            min="1"
+            value={newProductPrice}
+            onChange={(e) => setNewProductPrice(e.target.value)}
+            placeholder="Contoh: 25000"
+            className="w-full rounded-lg border border-stone-300 px-4 py-3"
+            required
+            />
+          </div>
+
+          {productMessage && (
+            <p className="text-sm text-amber-800">
+              {productMessage}
+            </p>
+          )}
+
+          <button
+          type="submit"
+          disabled={isSavingProduct}
+          className="rounded-lg bg-amber-800 px-6 py-3 font-semibold text-white hover:bg-amber-900 disabled:opacity-50"
+          >
+            {isSavingProduct
+            ? 'Menyimpan...'
+            : editingProductId !== null
+            ? 'Simpan Perubahan'
+            : 'Tambah Produk'}
+          </button>
+
+          </form>
+          </div>
+
+          <div className="rounded-xl bg-white p-6 text-stone-800 shadow">
+
+            <h2 className="text-xl font-bold text-amber-900">
+              Daftar Produk
+            </h2>
+
+            <div className="mt-4 space-y-3">
+
+              {products.map((product) => (
+                <div
+                key={product.id}
+                className="rounded-lg border border-stone-200 p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-bold">
+                        {product.name}
+                      </h3>
+
+                      <p className="mt-1 text-sm text-stone-500">
+                        {product.description}
+                      </p>
+                    </div>
+
+                    <p className="font-bold text-amber-900">
+                      Rp {product.price.toLocaleString('id-ID')}
+                    </p>
+
+                    <div className="flex gap-2">
+                      <button
+                      type="button"
+                      onClick={() => handleEditProduct(product)}
+                      className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
+                      >
+                        Edit
+                      </button>
+
+                      <button
+                      type="button"
+                      onClick={() => handleDeleteProduct(product.id)}
+                      className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
+                      >
+                        Hapus
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {products.length === 0 && (
+                <p className="text-sm text-stone-500">
+                  Belum ada Produk
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {activePage === 'KASIR' && (
+        <>
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <section className="lg:col-span-2">
 
@@ -345,6 +679,11 @@ function App() {
     </div>
   )}
 
+</>
+)}
+
+
+  {activePage === 'TRANSAKSI' && (
   <section className="mt-8 rounded-2xl bg-white p-6 shadow-sm">
     <h2 className="text-xl font-bold text-stone-800">
       Riwayat Transaksi
@@ -394,9 +733,6 @@ function App() {
         Belum ada transaksi.
       </p>
 
-      
-
-
     ) : (
       <>
       {filteredTransactions.length === 0 && (
@@ -435,8 +771,9 @@ function App() {
       </div>
       </>
     )}
-
   </section>
+)}
+
 
 
 
