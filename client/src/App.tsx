@@ -12,26 +12,44 @@ function App() {
   const isAdmin = user?.role === 'ADMIN'
   const isFloor = user?.role === 'FLOOR'
 
-  type Page = 'DASHBOARD' | 'KASIR' | 'TRANSAKSI' | 'PRODUK'
+  type Page = 'DASHBOARD' | 'KASIR' | 'TRANSAKSI' | 'PRODUK' | 'KATEGORI'
 
   const [activePage, setActivePage] = useState<Page>(
     user?.role === 'ADMIN' ? 'DASHBOARD' : 'KASIR'
   )
 
-  const [apiProducts, setApiProducts] = useState<
-  {
+  type Product = {
     id: number
     name: string
     description: string
     price: number
-  }[]
-  >([])
+    categoryId: number | null
+    category: Category | null
+  }
+
+  const [apiProducts, setApiProducts] = useState<Product[]>([])
+  
 
   const products = apiProducts
+
+  type Category ={
+    id: number
+    name: string
+  }
+
+  const [categories, setCategories] = useState<Category[]>([])
+  const [isLoadingCategories, setIsLoadingCategories] = useState(false)
+  const [categoryError, setCategoryError] = useState('')
+
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null)
+  const [isSavingCategory, setIsSavingCategory] = useState(false)
+  const [categoryMessage, setCategoryMessage] = useState('')
 
   const [newProductName, setNewProductName] = useState('')
   const [newProductDescription, setNewProductDescription] = useState('')
   const [newProductPrice, setNewProductPrice] = useState('')
+  const [newProductCategoryId, setNewProductCategoryId] = useState('')
   const [editingProductId, setEditingProductId] = useState<number | null>(null)
 
   const [isSavingProduct, setIsSavingProduct] = useState(false)
@@ -51,6 +69,110 @@ function App() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  async function fetchCategories() {
+    try {
+      setIsLoadingCategories(true)
+      setCategoryError('')
+
+      const response = await api.get('/api/categories')
+
+      setCategories(response.data)
+    } catch (error) {
+      console.error('Gagal mengambil kategori:', error)
+      setCategoryError('Gagal memuat kategori. Periksa koneksi server.')
+    } finally {
+      setIsLoadingCategories(false)
+    }
+  }
+
+  async function fetchTransactions() {
+  try {
+    setIsLoadingTransactions(true)
+    setTransactionError('')
+
+    const response = await api.get('/api/transactions')
+
+    setTransactions(response.data.transactions)
+  } catch (error: any) {
+    console.error('Gagal mengambil riwayat transaksi:', error)
+
+    setTransactionError(
+      error.response?.data?.message ||
+      'Gagal memuat riwayat transaksi'
+    )
+  } finally {
+    setIsLoadingTransactions(false)
+  }
+}
+
+  async function handleSaveCategory(e: React.SubmitEvent<HTMLElement>) {
+    e.preventDefault()
+
+    setCategoryMessage('')
+
+    if (!newCategoryName.trim()) {
+      setCategoryMessage('Nama kategori wajib diisi.')
+      return
+    }
+
+    try {
+      setIsSavingCategory(true)
+
+      const categoryData ={
+        name: newCategoryName.trim(),
+      }
+
+      if (editingCategoryId !== null) {
+        await api.patch(
+          `/api/categories/${editingCategoryId}`,
+          categoryData
+        )
+
+        setCategoryMessage('Kategori berhasil diperbarui')
+      } else {
+        await api.post('/api/categories', categoryData)
+
+        setCategoryMessage('Kategori berhasil ditambahkan!')
+      }
+
+      setNewCategoryName('')
+      setEditingCategoryId(null)
+
+      await fetchCategories()
+    } catch (error: any) {
+      console.error('Gagal menyimpak kategori:', error)
+      setCategoryMessage(error.response?.data?.message || 'Gagal menyimpan ketegori.')
+    } finally{
+      setIsSavingCategory(false)
+    }
+  }
+
+  function handleEditCategory(category: Category) {
+    setEditingCategoryId(category.id)
+    setNewCategoryName(category.name)
+    setCategoryMessage('')
+  }
+
+  async function handleDeleteCategory(categoryId: number) {
+    const confirmation = window.confirm(
+      'Apakah kamu yakin ingin menghapus kategori ini?'
+    )
+
+    if (!confirmation) return
+
+      try {
+        await api.delete(`/api/categories/${categoryId}`)
+
+        setCategoryMessage('Kategori berhasil dihapus!')
+
+        await fetchCategories()
+      } catch (error: any) {
+        console.error('Gagal menghapus kategori:', error)
+
+        setCategoryMessage(error.response?.data?.message || 'Gagal menghapus kategori')
+      }
   }
 
   async function handleSaveProduct(e: React.SubmitEvent<HTMLElement>) {
@@ -77,6 +199,9 @@ function App() {
         name: newProductName.trim(),
         description: newProductDescription.trim(),
         price: price,
+        categoryId: newProductCategoryId
+        ? Number(newProductCategoryId)
+        : null,
       }
 
       if (editingProductId !== null) {
@@ -95,6 +220,7 @@ function App() {
       setNewProductName('')
       setNewProductDescription('')
       setNewProductPrice('')
+      setNewProductCategoryId('')
       setEditingProductId(null)
 
       await fetchProducts()
@@ -107,16 +233,16 @@ function App() {
     }
   }
 
-  function handleEditProduct(product: {
-    id: number
-    name: string
-    description: string
-    price: number
-  }) {
+  function handleEditProduct(product: Product) {
     setEditingProductId(product.id)
     setNewProductName(product.name)
     setNewProductDescription(product.description)
     setNewProductPrice(String(product.price))
+    setNewProductCategoryId(
+      product.categoryId !== null
+        ? String(product.categoryId)
+        : ''
+    )
     setProductMessage
   }
 
@@ -145,9 +271,15 @@ function App() {
       )
 
       fetchProducts()
+      fetchCategories()
+      fetchTransactions()
     } else {
       setApiProducts([])
+      setCategories([])
+      setTransactions([])
       setIsLoading(false)
+      setIsLoadingCategories(false)
+      setIsLoadingTransactions(false)
     }
   }, [user])
 
@@ -158,33 +290,69 @@ function App() {
   const [paymentSuccess, setPaymentSuccess] = useState(false)
 
   const [transactionNumber, setTransactionNumber] = useState('')
-  const [transactions, setTransactions] = useState<
-    {
-      id: string
-      total: number
-      paymentMethod: string
-      date: string
-  }[]
-  >([])
+
+  type Transaction = {
+    id: number
+    transactionNumber: string
+    total: number
+    paymentMethod: string
+    createdAt: string
+    items: {
+      id: number
+      productName: string
+      quantity: number
+      unitPrice: number
+      subtotal: number
+    }[]
+  }
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false)
+  const [transactionError, setTransactionError] = useState('')
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false)
+  const [paymentError, setPaymentError] = useState('')
 
   const [searchTransaction, setSearchTransaction] = useState('')
 
   const [cart, setCart] = useState<Record<number, number>>({})
-  function processPayment() {
-    const newTransactionNumber = `BB-${Date.now()}`
 
-    setTransactionNumber(newTransactionNumber)
-    setTransactions((currentTransactions) => [
-      ...currentTransactions,
-      {
-        id: newTransactionNumber,
-        total: cartTotal,
-        paymentMethod: paymentMethod,
-        date: new Date().toISOString(),
-      },
-    ])
-    setCart({})
-    setPaymentSuccess(true)
+  async function processPayment() {
+    if (Object.keys(cart).length === 0) {
+      return
+    }
+
+    try {
+      setIsProcessingPayment(true)
+      setPaymentError('')
+
+      const transactionData = {
+        paymentMethod,
+        items: Object.entries(cart).map(([productId, quantity]) => ({
+          productId: Number(productId),
+          quantity,
+        })),
+      }
+
+      const response = await api.post(
+        '/api/transactions', transactionData
+      )
+
+      const savedTransaction = response.data.transaction
+
+      setTransactionNumber(savedTransaction.transactionNumber)
+      setPaymentSuccess(true)
+      setCart({})
+
+      await fetchTransactions()
+    } catch (error: any) {
+      console.error('Gagal memproses pembayaran:', error)
+
+      setPaymentError(
+        error.response?.data?.message ||
+        'Pembayaran gagal diproses. Silakan coba kembali.'
+      )
+    } finally {
+      setIsProcessingPayment(false)
+    }
   }
 
   function addToCart(productId: number) {
@@ -217,7 +385,7 @@ function App() {
   }
 
   const filteredTransactions = transactions.filter((transaction) => 
-    transaction.id
+    transaction.transactionNumber
       .toLocaleLowerCase()
       .includes(searchTransaction.toLocaleLowerCase())
   )
@@ -292,6 +460,20 @@ function App() {
           }`}
           >
             Poduct
+          </button>
+        )}
+
+        {isAdmin && (
+          <button
+          type="button"
+          onClick={() => setActivePage('KATEGORI')}
+          className={`rounded-lg px-5 py-3 font-semibold transition ${
+            activePage === 'KATEGORI'
+            ? 'bg-amber-500 text-amber-950'
+            : 'bg-amber-900 text-white hover:bg-amber-800'
+          }`}
+          >
+            Kategori
           </button>
         )}
 
@@ -410,6 +592,26 @@ function App() {
             />
           </div>
 
+        <div>
+          <label className="mb-2 block font-medium">
+            Kategori Produk
+          </label>
+
+          <select
+            value={newProductCategoryId}
+            onChange={(e) => setNewProductCategoryId(e.target.value)}
+            className="w-full rounded-lg border border-stone-300 px-4 py-3"
+          >
+            <option value="">Tanpa Kategori</option>
+
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
           {productMessage && (
             <p className="text-sm text-amber-800">
               {productMessage}
@@ -453,6 +655,10 @@ function App() {
                       <p className="mt-1 text-sm text-stone-500">
                         {product.description}
                       </p>
+
+                      <p className="mt-1 text-sm text-amber-700">
+                        Kategori: {product.category?.name ?? 'Tanpa Kategori'}
+                      </p>
                     </div>
 
                     <p className="font-bold text-amber-900">
@@ -486,6 +692,131 @@ function App() {
                 </p>
               )}
             </div>
+          </div>
+        </section>
+      )}
+
+      {activePage === 'KATEGORI' && isAdmin && (
+        <section className="space-y-6">
+          <div className="rounded-xl bg-white p-6 text-stone-800 shadow">
+            <h2 className="text-2xl font-bold text-amber-900">
+              Manajemen Kategori
+            </h2>
+
+            <p className="mt-2 text-stone-600">
+              Kelola Kategori produk Brew & Beans.
+            </p>
+
+            <form onSubmit={handleSaveCategory} className="mt-6 space-y-4">
+              <div>
+                <label className="mb-2 block font-medium">
+                  Nama Kategori
+                </label>
+
+                <input
+                type="text"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                placeholder="Contoh: Coffe"
+                className="w-full rounded-lg border border-stone-300 px-4 py-3"
+                required
+                />
+              </div>
+
+              {categoryMessage && (
+                <p className="text-sm text-amber-800">
+                    {categoryMessage}
+                </p>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                type="submit"
+                disabled={isSavingCategory}
+                className="rounded-lg bg-amber-800 px-6 py-3 font-semibold text-white hover:bg-amber-900 disabled:opacity-50"
+                >
+                  {isSavingCategory
+                    ? 'Menyimpan...'
+                    :editingCategoryId !== null
+                      ? 'Simpan perubahan'
+                      : 'Tambah Kategori'
+                  }
+                </button>
+
+                {editingCategoryId !== null && (
+                  <button
+                  type="button"
+                  onClick={() => {
+                    setEditingCategoryId(null)
+                    setNewCategoryName('')
+                    setCategoryMessage('')
+                  }}
+                  className="rounded-lg bg-stone-200 px-6 py-3 font-semibold text-stone-800 hover:bg-stone-300"
+                  >
+                    BAtal Edit
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+
+          <div className="rounded-xl bg-white p-6 text-stone-800 shadow">
+                <h2 className="text-xl font-bold text-amber-900">
+                  Daftar Kategori
+                </h2>
+
+                {isLoadingCategories ? (
+                  <p className="mt-4 text-stone-500">
+                    Memuat Kategori
+                  </p>
+                ) : categoryError ? (
+                  <div className="mt-4">
+                    <p className="text-red-600">
+                    {categoryError}
+                    </p>
+
+                    <button
+                    type="button"
+                    onClick={fetchCategories}
+                    className="mt-3 rounded-lg bg-amber-800 px-4 py-2 font-semibold text-white hover:bg-amber-900"
+                    >
+                      Coba Lagi
+                    </button>
+                  </div>
+                ) : categories.length === 0 ? (
+                  <p className="mt-4 text-sm text-stone-500">
+                    Belum ada Kategori.
+                  </p>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    {categories.map((category) => (
+                      <div
+                      key={category.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-stone-200 p-4"
+                      >
+                        <div>
+                          <h3 className="font-semibold">
+                            {category.name}
+                          </h3>
+
+                          <p className="mt-1 text-sm text-stone-500">
+                            ID Kategori: {category.id}
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                          type="button"
+                          onClick={() => handleEditCategory(category)}
+                          className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-red-700"
+                          >
+                            Happy
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
           </div>
         </section>
       )}
@@ -647,11 +978,17 @@ function App() {
         <button
         type="button"
         onClick={processPayment}
-        disabled={paymentSuccess}
+        disabled={paymentSuccess || isProcessingPayment}
         className='mt-3 w-full rounded-lg bg-green-700 px-4 py-3 font-bold text-white hover:bg-green-800'
         >
-          {paymentSuccess ? 'Pembayaran Selesai' : 'Proses Pembayaran'}
+          {isProcessingPayment ? 'Memproses Pembayaran...' : paymentSuccess ? 'Pembayaran selesai' : 'Proses pembayaran'}
         </button>
+
+        {paymentError && (
+          <p className="mt-3 text-center text-sm text-red-600">
+            {paymentError}
+          </p>
+        )}
 
         {paymentSuccess && (
           <>
@@ -660,7 +997,7 @@ function App() {
           </p>
 
           <p className="mt-4 rounded-lg bg-green-50 p-3 text-center font-semibold text-green-800">
-            Pembayaran berhasil disimulasikan!
+            Pembayaran berhasil disimpan!
           </p>
           </>
         )}
@@ -728,18 +1065,33 @@ function App() {
       Reset Pencarian
     </button>
 
-    {transactions.length === 0 ? (
+    {isLoadingTransactions ? (
+      <p className="mt-4 text-stone-500">
+        Memuat riwayat transaksi...
+      </p>
+    ) : transactionError ? (
+      <div className="mt-4">
+        <p className="text-red-600">
+          {transactionError}
+        </p>
+
+        <button
+        type="button"
+        onClick={fetchTransactions}
+        className="mt-3 rounded-lg bg-amber-800 px-4 py-2 font-semibold text-white"
+        >
+          Coba Lagi
+        </button>
+      </div>
+    ) : transactions.length === 0 ? (
       <p className="mt-3 text-sm text-stone-500">
         Belum ada transaksi.
       </p>
-
     ) : (
       <>
       {filteredTransactions.length === 0 && (
         <p className="mt-3 text-sm text-stone-500">
-          {transactions.length === 0
-          ? 'Belum ada transaksi.'
-          : 'Transaksi tidak ditemukan.'}
+          Transaksi tidak ditemukan.
         </p>
       )}
 
@@ -747,25 +1099,44 @@ function App() {
         {filteredTransactions.map((transaction) => (
           <div
           key={transaction.id}
-          className="rounded-lg border border-stone-200 p-4">
+          className="rounded-lg border border-stone-200 p-4"
+          >
+            <p className="font-semibold text-stone-800">
+              {transaction.transactionNumber}
+            </p>
 
-          <p className="font-semibold text-stone-800">
-            {transaction.id}
-          </p>
+            <p className="mt-1 text-sm text-stone-600">
+              Metode: {transaction.paymentMethod}
+            </p>
 
-          <p className="mt-1 text-sm text-stone-600">
-            Metode: {transaction.paymentMethod}
-          </p>
+            <p className="mt-1 font-bold text-amber-800">
+              Rp {transaction.total.toLocaleString('id-ID')}
+            </p>
 
-          <p className="mt-1 font-bold text-amber-800">
-            Rp {transaction.total.toLocaleString('id-ID')}
-          </p>
+            <p className="mt-1 text-sm text-stone-500">
+              Waktu: {new Date(transaction.createdAt).toLocaleString('id-ID')}
+            </p>
 
-          <p className="mt-1 text-sm text-stone-500">
-            Waktu: {new Date(transaction.date).toLocaleString('id-ID')}
-          </p>
+            <div className="mt-3 border-t border-stone-200 pt-3">
+              <p className="mb-2 text-sm font-semibold text-stone-700">
+                Detail Produk
+              </p>
 
+              {transaction.items.map((item) => (
+                <div
+                key={item.id}
+                className="flex justify-between gap-3 text-sm text-stone-600"
+                >
+                  <span>
+                    {item.productName} × {item.quantity}
+                  </span>
 
+                  <span>
+                    Rp {item.subtotal.toLocaleString('id-ID')}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>

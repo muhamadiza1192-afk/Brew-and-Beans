@@ -18,8 +18,13 @@ model Product {
   description String
   price       Int
 
+  stock         Int       @default(0)
+  minimumStock  Int       @default(5)
+
   categoryId  Int?
   category    Category? @relation(fields: [categoryId], references: [id])
+
+  transactionItems TransactionItem[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -39,6 +44,43 @@ model User {
   username  String   @unique
   password  String
   role      Role     @default(FLOOR)
+
+  transactions Transaction[] @relation("CashierTransactions")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Transaction {
+  id        Int       @id @default(autoincrement())
+  transactionNumber   String  @unique
+  total     Int
+  paymentMethod   String
+
+  cashierId    Int?
+  cashier      User?    @relation("CashierTransactions", fields: [cashierId], references: [id], onDelete: SetNull)
+
+  items        TransactionItem[]
+
+  createdAt    DateTime  @default(now())
+
+  @@index([createdAt])
+}
+
+model TransactionItem {
+  id          Int         @id @default(autoincrement())
+
+  transactionId   Int
+  transaction     Transaction   @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  productId    Int?
+  product      Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  productName    String
+  quantity       Int
+  unitPrice      Int
+  subtotal       Int
+
+  @@index([transactionId])
+  @@index([productId])
 }

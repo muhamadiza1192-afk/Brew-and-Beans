@@ -4,6 +4,7 @@ export const productSchema = z.object({
   name: z.string().trim().min(1),
   description: z.string().trim().min(1),
   price: z.number().int().positive(),
+  categoryId : z.number().int().positive().nullable().optional(),
 })
 
 export const productIdSchema = z.coerce.number().int().positive()
