@@ -6,6 +6,7 @@ export const productSchema = z.object({
   price: z.number().int().positive(),
   costPrice: z.number().int().min(0, 'Harga modal tidak boleh negatif'),
   categoryId : z.number().int().positive().nullable().optional(),
+  imageUrl: z.string().trim().nullable().optional(),
 
   stock: z.number()
   .int('Stok harus berupa bilangan bulat')

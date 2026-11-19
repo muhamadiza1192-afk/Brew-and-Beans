@@ -12,10 +12,12 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "axios": "^1.21.0",
+    "lucide-react": "^1.75.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "recharts": "^3.10.1",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

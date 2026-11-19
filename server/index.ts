@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import midtransClient from 'midtrans-client'
 import { authenticateToken, authorizeRole } from './middleware/auth.middleware.js'
 import { prisma } from './prisma.js'
 import { z } from 'zod'
@@ -17,9 +18,16 @@ import { expenseSchema, updateExpenseSchema, expenseIdSchema } from './schemas/e
 import { createUserSchema, updateUserSchema, userIdSchema } from './schemas/user.schema.js'
 
 const app = express ()
+const snap = new midtransClient.Snap({
+    isProduction: false,
+    serverKey: process.env.MIDTRANS_SERVER_KEY ?? '',
+    clientKey: process.env.MIDTRANS_CLIENT_KEY ?? '',
+})
 
 app.use(cors())
-app.use(express.json())
+// [CONFIG] Tingkatkan batas ukuran body request ke 10MB untuk mendukung upload foto Base64 dari galeri
+app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 app.get('/', (req, res) => {
     res.send(' Brew & Beans API is running!')
@@ -210,7 +218,7 @@ app.patch('/api/products/:id/stock', authenticateToken, authorizeRole('ADMIN'), 
             }),
             ...(validation.data.minimumStock !== undefined && {
                 minimumStock: validation.data.minimumStock,
-            }),
+            })
         }
 
         const updatedProduct = await prisma.product.update({
@@ -246,7 +254,7 @@ app.post('/api/products', authenticateToken, authorizeRole('ADMIN'),async (req, 
             })
         }
 
-        const { categoryId, ...productData } = validation.data
+        const { categoryId, imageUrl, ...productData } = validation.data
 
         if (categoryId !== undefined && categoryId !== null) {
             const existingCategory = await prisma.category.findUnique({
@@ -264,7 +272,9 @@ app.post('/api/products', authenticateToken, authorizeRole('ADMIN'),async (req, 
 
         const newProduct = await prisma.product.create({
             data: {
-                ...productData, categoryId: categoryId ?? null,
+                ...productData,
+                categoryId: categoryId ?? null,
+                imageUrl: imageUrl ?? null,
             },
         })
 
@@ -324,6 +334,9 @@ app.patch('/api/products/:id', authenticateToken, authorizeRole('ADMIN'), async 
             }),
             ...(validation.data.minimumStock !== undefined && {
                 minimumStock: validation.data.minimumStock,
+            }),
+            ...(validation.data.imageUrl !== undefined && {
+                imageUrl: validation.data.imageUrl,
             })
         }
 
@@ -615,6 +628,65 @@ app.delete('/api/categories/:id', authenticateToken, authorizeRole('ADMIN'), asy
     }
 })
 
+app.post('/api/payments/midtrans-token', authenticateToken, async (req, res) => {
+    try {
+        const { items } = req.body
+        if (!items || !Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ message: 'Keranjang transaksi tidak boleh kosong'})
+        }
+
+        const mainIds = items.map((i: { productId: number }) => i.productId)
+        const addonIds = items.flatMap((i: { addonIds?: number[] }) => i.addonIds || [])
+        const allProductIds = [...new Set([...mainIds, ...addonIds])]
+
+        const products = await prisma.product.findMany({
+            where: { id: { in: allProductIds } },
+        })
+
+        if (products.length !== allProductIds.length) {
+            return res.status(404).json({ message: 'Sebagian produk tidak ditemukan' })
+        }
+
+        const itemDetails = items.map((item: { productId: number; quantity: number; addonIds?: number[] }) => {
+            const prod = products.find((p) => p.id === item.productId)!
+            const itemAddons = (item.addonIds || []).map((id) => products.find((p) => p.id === id)).filter(Boolean) as typeof products
+            const addonTotalPrice = itemAddons.reduce((sum, a) => sum + a.price, 0)
+            const finalUnitPrice = prod.price + addonTotalPrice
+            
+            return {
+                id: String(prod.id),
+                price: finalUnitPrice,
+                quantity: item.quantity,
+                name: prod.name.slice(0, 50),
+            }
+        })
+
+        const grossAmount = itemDetails.reduce(( sum: number, item: { price: number; quantity: number}) => sum + item.price * item.quantity,0)
+        const orderId = `BB-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+
+        const parameter = {
+            transaction_details: {
+                order_id: orderId,
+                gross_amount: grossAmount,
+            },
+            item_details: itemDetails,
+            customer_details: { first_name: res.locals.user?.username || 'Customer',},
+        }
+
+        const transaction = await snap.createTransaction(parameter)
+
+        return res.status(200).json({
+            message: 'Token Midtrans berhasil dibuat',
+            token: transaction.token,
+            redirect_url: transaction.redirect_url,
+            orderId,
+        })
+    } catch (error) {
+        console.error('Gagal membuat token Midtrans:', error)
+        return res.status(500).json({ message: 'Gagal membuat token pembayaran Midtrans'})
+    }
+})
+
 app.post('/api/transactions', authenticateToken, async (req, res) => {
     try {
         const validation = transactionSchema.safeParse(req.body)
@@ -640,15 +712,17 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
                 return { type: 'cashier-not-found' as const }
             }
 
-            const productIds = [...new Set(items.map((item) => item.productId))]
+            const mainIds = items.map((item) => item.productId)
+            const addonIds = items.flatMap((item) => item.addonIds)
+            const allProductIds = [...new Set([...mainIds, ...addonIds])]
 
             const products = await tx.product.findMany({
                 where: {
-                    id: { in: productIds,},
+                    id: { in: allProductIds,},
                 },
             })
 
-            if (products.length !== productIds.length) {
+            if (products.length !== allProductIds.length) {
                 return { type: 'product-not-found' as const }
             }
 
@@ -669,19 +743,48 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
             if (stockUpdate.count === 0) {
                 throw new Error('INSUFFICIENT_STOCK')
             }
+
+            for (const addonId of item.addonIds || []) {
+                const addonStockUpdate = await tx.product.updateMany({
+                    where: {
+                        id: addonId,
+                        stock: { gte: item.quantity },
+                    },
+                    data: {
+                        stock: { decrement: item.quantity },
+                    },
+                })
+                if (addonStockUpdate.count === 0) {
+                    throw new Error('INSUFFICIENT_STOCK')
+                }
+            }
         }
             const transactionItems = items.map((item) => {
                 const product = products.find((product) => product.id === item.productId)!
+                const selectedAddons = (item.addonIds || [])
+                    .map((id) => products.find((p) => p.id === id))
+                    .filter(Boolean) as typeof products
+                const addonTotalPrice = selectedAddons.reduce((sum, a) => sum + a.price, 0)
+                const addonTotalCost = selectedAddons.reduce((sum, a) => sum + a.costPrice, 0)
 
-                const subtotal = product.price * item.quantity
+                const finalUnitPrice = product.price + addonTotalPrice
+                const finalUnitCost = product.costPrice + addonTotalCost
+
+                const subtotal = finalUnitPrice * item.quantity
+
+                const addonsText = selectedAddons.length > 0
+                    ? selectedAddons.map((a) => `${a.name} (+Rp ${a.price.toLocaleString('id-ID')})`).join(', ')
+                    : null
 
                 return {
                     productId: product.id,
                     productName: product.name,
                     quantity: item.quantity,
-                    unitPrice: product.price,
-                    unitCost: product.costPrice,
+                    unitPrice: finalUnitPrice,
+                    unitCost: finalUnitCost,
                     subtotal,
+                    notes: item.notes?.trim() || null,
+                    addons: addonsText,
                 }
             })
 
@@ -1167,6 +1270,265 @@ app.delete('/api/expenses/:id', authenticateToken, authorizeRole('ADMIN'), async
 
         res.status(500).json({
             message: 'Gagal menghapus biaya operasional',
+        })
+    }
+})
+
+app.get('/api/users', authenticateToken, authorizeRole('ADMIN'), async (req, res) => {
+    try {
+        const users = await prisma.user.findMany({
+            select: {
+                id: true,
+                username: true,
+                role: true,
+                createdAt: true,
+                updatedAt: true,
+            },
+            orderBy: { createdAt: 'desc',},
+        })
+
+        return res.json({
+            message: 'Daftar pengguna berhasil diambil', users,
+        })
+    } catch (error) {
+        console.error('Gagal mengambil daftar pengguna:', error)
+
+        return res.status(500).json({
+            message: 'Gagal mengambil daftar pengguna',
+        })
+    }
+})
+
+app.post('/api/users', authenticateToken, authorizeRole('ADMIN'), async (req, res)=> {
+    try {
+        const validation = createUserSchema.safeParse(req.body)
+
+        if (!validation.success) {
+            return res.status(400).json({
+                message: 'Data pengguna tidak valid',
+                errors: z.treeifyError(validation.error),
+            })
+        }
+
+        const { username, password, role } = validation.data
+
+        const existingUser = await prisma.user.findUnique({
+            where: { username },
+        })
+
+        if (existingUser) {
+            return res.status(409).json({
+                message: 'Username sudah digunakan',
+            })
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10)
+
+        const newUser = await prisma.user.create({
+            data: {
+                username, password: hashedPassword, role,
+            },
+            select: {
+                id: true,
+                username: true,
+                role: true,
+                createdAt: true,
+                updatedAt: true,
+            },
+        })
+
+        return res.status(201).json({
+            message: 'Pengguna berhasil ditambahkan',
+            user: newUser,
+        })
+    } catch (error) {
+        console.error('Gagal menambahkan pengguna:', error)
+
+        if (
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            error.code === 'P2002'
+        ) {
+            return res.status(409).json({
+                message: 'Username sudah digunakan',
+            })
+        }
+
+        return res.status(500).json({
+            message: 'Gagal menambahkan pengguna',
+        })
+    }
+})
+
+app.patch('/api/users/:id', authenticateToken, authorizeRole('ADMIN'), async (req, res) => {
+    try {
+        const idValidation = userIdSchema.safeParse(req.params.id)
+
+        if(!idValidation.success) {
+            return res.status(400).json({
+                message: 'ID pengguna tidak valid',
+                errors :z.treeifyError(idValidation.error),
+            })
+        }
+
+        const validation = updateUserSchema.safeParse(req.body)
+
+        if (!validation.success) {
+            return res.status(400).json({
+                message: 'Data pengguna tidak valid',
+                errors: z.treeifyError(validation.error),
+            })
+        }
+
+        const userId = idValidation.data
+        const data = validation.data
+
+        if (Object.keys(data).length === 0) {
+            return res.status(400).json({
+                message: 'Tidak ada data yang diperbarui',
+            })
+        }
+
+        const existingUser = await prisma.user.findUnique({
+            where: { id: userId },
+        })
+
+        if (!existingUser) {
+            return res.status(404).json({
+                message: 'Pengguna tidak ditemukan',
+            })
+        }
+
+        if (data.username !== undefined) {
+            const duplicateUser = await prisma.user.findFirst({
+                where: {
+                    username: data.username,
+                    NOT: { id: userId },
+                },
+            })
+
+            if (duplicateUser) {
+                return res.status(409).json({
+                    message: 'Username sudah digunakan',
+                })
+            }
+        }
+
+        const updateData: {
+            username?: string
+            password?: string
+            role?: 'ADMIN' | 'FLOOR'
+        } ={}
+
+        if (data.username !== undefined) {
+            updateData.username = data.username
+        }
+
+        if (data.password !== undefined) {
+            updateData.password = await bcrypt.hash(data.password, 10)
+        }
+
+        if (data.role !== undefined) {
+            updateData.role = data.role
+        }
+
+        const updateUser = await prisma.user.update({
+            where: { id: userId },
+            data: updateData,
+            select: {
+                id: true,
+                username: true,
+                role: true,
+                createdAt: true,
+                updatedAt: true,
+            },
+        })
+
+        return res.json({
+            message: 'Pengguna berhasil diperbarui',
+            user: updateUser,
+        })
+    } catch (error) {
+        console.error('Gagal memperbarui pengguna:', error)
+
+        if(
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            error.code === 'P2002'
+        ) {
+            return res.status(409).json({
+                message: 'Username sudah digunakan',
+            })
+        }
+
+        return res.status(500).json({
+            message: 'Gagal memperbarui pengguna',
+        })
+    }
+})
+
+app.delete('/api/users/:id', authenticateToken, authorizeRole('ADMIN'), async (req, res) => {
+    try {
+        const validation = userIdSchema.safeParse(req.params.id)
+
+        if(!validation.success) {
+            return res.status(400).json({
+                message: 'ID pengguna tidak valid',
+                errors: z.treeifyError(validation.error),
+            })
+        }
+
+        const userId = validation.data
+        const currentUserId = res.locals.user.userId
+
+        if (userId === currentUserId) {
+            return res.status(403).json({
+                message: 'Anda tidak dapat menghapus akun sendiri',
+            })
+        }
+
+        const existingUser = await prisma.user.findUnique({
+            where: { id: userId },
+        })
+
+        if (!existingUser) {
+            return res.status(404).json({
+                message: 'Pengguna tidak ditemukan',
+            })
+        }
+
+        if (existingUser.role === 'ADMIN') {
+            const totalAdmins = await prisma.user.count({
+                where: { role: 'ADMIN' },
+            })
+
+            if (totalAdmins <= 1) {
+                return res.status(409).json({
+                    message: 'Admin terakhir tidak dapat dihapus',
+                })
+            }
+        }
+
+        const deletedUser = await prisma.user.delete({
+            where: { id: userId },
+            select: {
+                id: true,
+                username: true,
+                role: true,
+            },
+        })
+
+        return res.json({
+            message: 'Pengguna berhasil dihapus',
+            user: deletedUser,
+        })
+    } catch (error) {
+        console.error('Gagal menghapus pengguna:', error)
+
+        return res.status(500).json({
+            message: 'Gagal menghapus pengguna',
         })
     }
 })

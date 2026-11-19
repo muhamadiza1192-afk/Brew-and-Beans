@@ -6,6 +6,8 @@ export const transactionSchema = z.object({
     items: z.array(z.object({
         productId: z.number().int().positive('ID produk tidak valid'),
         quantity: z.number().int().positive('Jumlah produk minimal 1'),
+        notes: z.string().trim().optional().nullable(),
+        addonIds: z.array(z.number().int().positive()).optional().default([]),
     })
 ).min(1, 'Transaksi harus memiliki minimal satu produk')
 .refine((items) => {

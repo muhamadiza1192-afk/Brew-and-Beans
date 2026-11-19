@@ -20,6 +20,7 @@ model Product {
   costPrice     Int       @default(0)
   stock         Int       @default(0)
   minimumStock  Int       @default(5)
+  imageUrl      String?
 
   categoryId    Int?
   category      Category? @relation(fields: [categoryId], references: [id])
@@ -81,6 +82,8 @@ model TransactionItem {
   unitPrice       Int
   unitCost        Int       @default(0)
   subtotal        Int
+  notes           String?
+  addons          String?
   
 
   @@index([transactionId])
