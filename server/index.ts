@@ -54,6 +54,10 @@ app.use('/api/users', userRoutes)
 
 const PORT = Number(process.env.PORT) || 3000
 
-app.listen(PORT, () => {
-    console.log(`Server berjalan di port ${PORT}`)
-})
+if (!process.env.VERCEL) {
+    app.listen(PORT, () => {
+        console.log(`Server berjalan di port ${PORT}`)
+    })
+}
+
+export default app
